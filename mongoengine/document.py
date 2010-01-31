@@ -84,7 +84,7 @@ class Document(BaseDocument):
                     modified_fields = map(lambda obj: obj[0], filter(lambda obj: obj[1].modified, self._fields.items()))
                     modified_doc = dict(filter(lambda k: k[0] in modified_fields, doc.items()))                
                     try:
-                        # 
+                        #
                         # WORK IN PROGRESS
                         # - EmbeddedDocuments still aren't tracked
                         #
@@ -96,7 +96,7 @@ class Document(BaseDocument):
                             raise OperationError('update() method requires MongoDB 1.1.3+')
                         raise OperationError('Update failed (%s)' % str(err))
                     object_id = self['id']
-
+            
             for field in self._fields.values(): field.modified = False
         except pymongo.errors.OperationFailure, err:
             message = 'Could not save document (%s)'
