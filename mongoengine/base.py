@@ -15,14 +15,13 @@ class BaseField(object):
     _index_with_types = True
     
     def __init__(self, name=None, required=False, default=None, unique=False,
-                 unique_with=None, primary_key=False, modified=False):
+                 unique_with=None, primary_key=False):
         self.name = name if not primary_key else '_id'
         self.required = required or primary_key
         self.default = default
         self.unique = bool(unique or unique_with)
         self.unique_with = unique_with
         self.primary_key = primary_key
-        self.modified = modified
 
     def __get__(self, instance, owner):
         """Descriptor for retrieving a value from a field in a document. Do 
@@ -45,7 +44,6 @@ class BaseField(object):
         """Descriptor for assigning a value to a field in a document.
         """
         instance._data[self.name] = value
-        self.modified = True
 
     def to_python(self, value):
         """Convert a MongoDB-compatible type to a Python type.
@@ -57,7 +55,7 @@ class BaseField(object):
         """
         return self.to_python(value)
 
-    def prepare_query_value(self, value):
+    def prepare_query_value(self, op, value):
         """Prepare a value that is being used in a query for PyMongo.
         """
         return value
@@ -73,7 +71,8 @@ class ObjectIdField(BaseField):
     """
     
     def to_python(self, value):
-        return unicode(value)
+        return value
+        # return unicode(value)
 
     def to_mongo(self, value):
         if not isinstance(value, pymongo.objectid.ObjectId):
@@ -83,7 +82,7 @@ class ObjectIdField(BaseField):
                 raise ValidationError(e.message)
         return value
 
-    def prepare_query_value(self, value):
+    def prepare_query_value(self, op, value):
         return self.to_mongo(value)
 
     def validate(self, value):
@@ -254,11 +253,8 @@ class BaseDocument(object):
 
     def __init__(self, **values):
         self._data = {}
-        
-        modified = 'id' in values.keys()
         # Assign initial values to instance
         for attr_name, attr_value in self._fields.items():
-            attr_value.modified = modified
             if attr_name in values:
                 setattr(self, attr_name, values.pop(attr_name))
             else:
@@ -382,9 +378,13 @@ class BaseDocument(object):
                 # that has been queried to return this SON
                 return None
             cls = subclasses[class_name]
-        
+
+        present_fields = data.keys()
+
         for field_name, field in cls._fields.items():
             if field.name in data:
                 data[field_name] = field.to_python(data[field.name])
-        
-        return cls(**data)
+
+        obj = cls(**data)
+        obj._present_fields = present_fields
+        return obj

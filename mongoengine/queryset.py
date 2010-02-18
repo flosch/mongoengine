@@ -33,14 +33,14 @@ class Q(object):
     AND = '&&'
     OPERATORS = {
         'eq': 'this.%(field)s == %(value)s',
-        'neq': 'this.%(field)s != %(value)s',
+        'ne': 'this.%(field)s != %(value)s',
         'gt': 'this.%(field)s > %(value)s',
         'gte': 'this.%(field)s >= %(value)s',
         'lt': 'this.%(field)s < %(value)s',
         'lte': 'this.%(field)s <= %(value)s',
         'lte': 'this.%(field)s <= %(value)s',
-        'in': 'this.%(field)s.indexOf(%(value)s) != -1',
-        'nin': 'this.%(field)s.indexOf(%(value)s) == -1',
+        'in': '%(value)s.indexOf(this.%(field)s) != -1',
+        'nin': '%(value)s.indexOf(this.%(field)s) == -1',
         'mod': '%(field)s %% %(value)s',
         'all': ('%(value)s.every(function(a){'
                 'return this.%(field)s.indexOf(a) != -1 })'),
@@ -265,7 +265,7 @@ class QuerySet(object):
     def _transform_query(cls, _doc_cls=None, **query):
         """Transform a query from Django-style format to Mongo format.
         """
-        operators = ['neq', 'gt', 'gte', 'lt', 'lte', 'in', 'nin', 'mod',
+        operators = ['ne', 'gt', 'gte', 'lt', 'lte', 'in', 'nin', 'mod',
                      'all', 'size', 'exists']
 
         mongo_query = {}
@@ -283,11 +283,11 @@ class QuerySet(object):
 
                 # Convert value to proper value
                 field = fields[-1]
-                if op in (None, 'neq', 'gt', 'gte', 'lt', 'lte'):
-                    value = field.prepare_query_value(value)
+                if op in (None, 'ne', 'gt', 'gte', 'lt', 'lte'):
+                    value = field.prepare_query_value(op, value)
                 elif op in ('in', 'nin', 'all'):
                     # 'in', 'nin' and 'all' require a list of values
-                    value = [field.prepare_query_value(v) for v in value]
+                    value = [field.prepare_query_value(op, v) for v in value]
 
             if op:
                 value = {'$' + op: value}
@@ -361,6 +361,21 @@ class QuerySet(object):
         if result is not None:
             result = self._document._from_son(result)
         return result
+
+    def in_bulk(self, object_ids):
+        """Retrieve a set of documents by their ids.
+        
+        :param object_ids: a list or tuple of ``ObjectId``s
+        :rtype: dict of ObjectIds as keys and collection-specific
+                Document subclasses as values.
+        """
+        doc_map = {}
+
+        docs = self._collection.find({'_id': {'$in': object_ids}})
+        for doc in docs:
+            doc_map[doc['_id']] = self._document._from_son(doc)
+ 
+        return doc_map
 
     def next(self):
         """Wrap the result in a :class:`~mongoengine.Document` object.
@@ -487,9 +502,9 @@ class QuerySet(object):
                 # Convert value to proper value
                 field = fields[-1]
                 if op in (None, 'set', 'unset', 'push', 'pull'):
-                    value = field.prepare_query_value(value)
+                    value = field.prepare_query_value(op, value)
                 elif op in ('pushAll', 'pullAll'):
-                    value = [field.prepare_query_value(v) for v in value]
+                    value = [field.prepare_query_value(op, v) for v in value]
 
             key = '.'.join(parts)
 
@@ -520,9 +535,10 @@ class QuerySet(object):
             self._collection.update(self._query, update, safe=safe_update, 
                                     multi=True)
         except pymongo.errors.OperationFailure, err:
-            if str(err) == 'multi not coded yet':
-                raise OperationError('update() method requires MongoDB 1.1.3+')
-            raise OperationError('Update failed (%s)' % str(err))
+            if unicode(err) == u'multi not coded yet':
+                message = u'update() method requires MongoDB 1.1.3+'
+                raise OperationError(message)
+            raise OperationError(u'Update failed (%s)' % unicode(err))
 
     def update_one(self, safe_update=True, **update):
         """Perform an atomic update on first field matched by the query.

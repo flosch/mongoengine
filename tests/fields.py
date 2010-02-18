@@ -1,5 +1,6 @@
 import unittest
 import datetime
+from decimal import Decimal
 
 from mongoengine import *
 from mongoengine.connection import _get_db
@@ -78,7 +79,7 @@ class FieldTest(unittest.TestCase):
 
         person.name = 'Shorter name'
         person.validate()
-
+        
     def test_int_validation(self):
         """Ensure that invalid values cannot be assigned to int fields.
         """
@@ -106,13 +107,13 @@ class FieldTest(unittest.TestCase):
         person.height = 1.89
         person.validate()
 
-        person.height = 2
+        person.height = '2.0'
         self.assertRaises(ValidationError, person.validate)
         person.height = 0.01
         self.assertRaises(ValidationError, person.validate)
         person.height = 4.0
         self.assertRaises(ValidationError, person.validate)
-
+        
     def test_boolean_validation(self):
         """Ensure that invalid values cannot be assigned to boolean fields.
         """
@@ -176,6 +177,28 @@ class FieldTest(unittest.TestCase):
         post.comments = 'yay'
         self.assertRaises(ValidationError, post.validate)
 
+    def test_dict_validation(self):
+        """Ensure that dict types work as expected.
+        """
+        class BlogPost(Document):
+            info = DictField()
+
+        post = BlogPost()
+        post.info = 'my post'
+        self.assertRaises(ValidationError, post.validate)
+
+        post.info = ['test', 'test']
+        self.assertRaises(ValidationError, post.validate)
+
+        post.info = {'$title': 'test'}
+        self.assertRaises(ValidationError, post.validate)
+
+        post.info = {'the.title': 'test'}
+        self.assertRaises(ValidationError, post.validate)
+
+        post.info = {'title': 'test'}
+        post.validate()
+
     def test_embedded_document_validation(self):
         """Ensure that invalid embedded documents cannot be assigned to
         embedded document fields.
@@ -184,7 +207,7 @@ class FieldTest(unittest.TestCase):
             content = StringField()
 
         class PersonPreferences(EmbeddedDocument):
-            food = StringField()
+            food = StringField(required=True)
             number = IntField()
 
         class Person(Document):
@@ -195,7 +218,12 @@ class FieldTest(unittest.TestCase):
         person.preferences = 'My Preferences'
         self.assertRaises(ValidationError, person.validate)
 
+        # Check that only the right embedded doc works
         person.preferences = Comment(content='Nice blog post...')
+        self.assertRaises(ValidationError, person.validate)
+
+        # Check that the embedded doc is valid
+        person.preferences = PersonPreferences()
         self.assertRaises(ValidationError, person.validate)
 
         person.preferences = PersonPreferences(food='Cheese', number=47)
@@ -258,6 +286,34 @@ class FieldTest(unittest.TestCase):
 
         User.drop_collection()
         BlogPost.drop_collection()
+    
+    def test_list_item_dereference(self):
+        """Ensure that DBRef items in ListFields are dereferenced.
+        """
+        class User(Document):
+            name = StringField()
+
+        class Group(Document):
+            members = ListField(ReferenceField(User))
+
+        User.drop_collection()
+        Group.drop_collection()
+
+        user1 = User(name='user1')
+        user1.save()
+        user2 = User(name='user2')
+        user2.save()
+
+        group = Group(members=[user1, user2])
+        group.save()
+
+        group_obj = Group.objects.first()
+
+        self.assertEqual(group_obj.members[0].name, user1.name)
+        self.assertEqual(group_obj.members[1].name, user2.name)
+
+        User.drop_collection()
+        Group.drop_collection()
 
     def test_reference_query_conversion(self):
         """Ensure that ReferenceFields can be queried using objects and values

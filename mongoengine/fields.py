@@ -1,26 +1,27 @@
 from base import BaseField, ObjectIdField, ValidationError
 from document import Document, EmbeddedDocument
 from connection import _get_db
- 
+
 import re
 import pymongo
 import datetime
+import decimal
 
 
 __all__ = ['StringField', 'IntField', 'FloatField', 'BooleanField',
-           'DateTimeField', 'EmbeddedDocumentField', 'ListField', 
+           'DateTimeField', 'EmbeddedDocumentField', 'ListField', 'DictField',
            'ObjectIdField', 'ReferenceField', 'ValidationError']
 
 
 class StringField(BaseField):
     """A unicode string field.
     """
-    
+
     def __init__(self, regex=None, max_length=None, **kwargs):
         self.regex = re.compile(regex) if regex else None
         self.max_length = max_length
         super(StringField, self).__init__(**kwargs)
-    
+
     def to_python(self, value):
         return unicode(value)
 
@@ -38,6 +39,25 @@ class StringField(BaseField):
         return None
 
 
+class URLField(BaseField):
+    """A field that validates input as a URL.
+    """
+
+    def __init__(self, verify_exists=True, **kwargs):
+        self.verify_exists = verify_exists
+        super(URLField, self).__init__(**kwargs)
+
+    def validate(self, value):
+        import urllib2
+
+        if self.verify_exists:
+            try:
+                request = urllib2.Request(value)
+                response = urllib2.urlopen(request)
+            except Exception, e:
+                raise ValidationError('This URL appears to be invalid: %s' % e)
+
+
 class IntField(BaseField):
     """An integer field.
     """
@@ -45,12 +65,15 @@ class IntField(BaseField):
     def __init__(self, min_value=None, max_value=None, **kwargs):
         self.min_value, self.max_value = min_value, max_value
         super(IntField, self).__init__(**kwargs)
-    
+
     def to_python(self, value):
         return int(value)
 
     def validate(self, value):
-        assert isinstance(value, (int, long))
+        try:
+            value = int(value)
+        except:
+            raise ValidationError('%s could not be converted to int' % value)
 
         if self.min_value is not None and value < self.min_value:
             raise ValidationError('Integer value is too small')
@@ -66,12 +89,13 @@ class FloatField(BaseField):
     def __init__(self, min_value=None, max_value=None, **kwargs):
         self.min_value, self.max_value = min_value, max_value
         super(FloatField, self).__init__(**kwargs)
-    
+
     def to_python(self, value):
         return float(value)
 
     def validate(self, value):
-        if isinstance(value, int): value = float(value)
+        if isinstance(value, int):
+            value = float(value)
         assert isinstance(value, float)
 
         if self.min_value is not None and value < self.min_value:
@@ -81,12 +105,41 @@ class FloatField(BaseField):
             raise ValidationError('Float value is too large')
 
 
+class DecimalField(BaseField):
+    """A fixed-point decimal number field.
+    """
+
+    def __init__(self, min_value=None, max_value=None, **kwargs):
+        self.min_value, self.max_value = min_value, max_value
+        super(DecimalField, self).__init__(**kwargs)
+
+    def to_python(self, value):
+        if not isinstance(value, basestring):
+            value = unicode(value)
+        return decimal.Decimal(value)
+
+    def validate(self, value):
+        if not isinstance(value, decimal.Decimal):
+            if not isinstance(value, basestring):
+                value = str(value)
+            try:
+                value = decimal.Decimal(value)
+            except Exception, exc:
+                raise ValidationError('Could not convert to decimal: %s' % exc)
+
+        if self.min_value is not None and value < self.min_value:
+            raise ValidationError('Decimal value is too small')
+
+        if self.max_value is not None and vale > self.max_value:
+            raise ValidationError('Decimal value is too large')
+
+
 class BooleanField(BaseField):
     """A boolean field type.
 
     .. versionadded:: 0.1.2
     """
-    
+
     def to_python(self, value):
         return bool(value)
 
@@ -103,8 +156,8 @@ class DateTimeField(BaseField):
 
 
 class EmbeddedDocumentField(BaseField):
-    """An embedded document field. Only valid values are subclasses of 
-    :class:`~mongoengine.EmbeddedDocument`. 
+    """An embedded document field. Only valid values are subclasses of
+    :class:`~mongoengine.EmbeddedDocument`.
     """
 
     def __init__(self, document, **kwargs):
@@ -113,7 +166,7 @@ class EmbeddedDocumentField(BaseField):
                                   'to an EmbeddedDocumentField')
         self.document = document
         super(EmbeddedDocumentField, self).__init__(**kwargs)
-    
+
     def to_python(self, value):
         if not isinstance(value, self.document):
             return self.document._from_son(value)
@@ -123,18 +176,19 @@ class EmbeddedDocumentField(BaseField):
         return self.document.to_mongo(value)
 
     def validate(self, value):
-        """Make sure that the document instance is an instance of the 
+        """Make sure that the document instance is an instance of the
         EmbeddedDocument subclass provided when the document was defined.
         """
         # Using isinstance also works for subclasses of self.document
         if not isinstance(value, self.document):
             raise ValidationError('Invalid embedded document instance '
                                   'provided to an EmbeddedDocumentField')
+        self.document.validate(value)
 
     def lookup_member(self, member_name):
         return self.document._fields.get(member_name)
 
-    def prepare_query_value(self, value):
+    def prepare_query_value(self, op, value):
         return self.to_mongo(value)
 
 
@@ -152,6 +206,30 @@ class ListField(BaseField):
                                   'a valid field')
         self.field = field
         super(ListField, self).__init__(**kwargs)
+
+    def __get__(self, instance, owner):
+        """Descriptor to automatically dereference references.
+        """
+        if instance is None:
+            # Document class being used rather than a document object
+            return self
+
+        if isinstance(self.field, ReferenceField):
+            referenced_type = self.field.document_type
+            # Get value from document instance if available
+            value_list = instance._data.get(self.name)
+            if value_list:
+                deref_list = []
+                for value in value_list:
+                    # Dereference DBRefs
+                    if isinstance(value, (pymongo.dbref.DBRef)):
+                        value = _get_db().dereference(value)
+                        deref_list.append(referenced_type._from_son(value))
+                    else:
+                        deref_list.append(value)
+                instance._data[self.name] = deref_list
+        
+        return super(ListField, self).__get__(instance, owner)
 
     def to_python(self, value):
         return [self.field.to_python(item) for item in value]
@@ -172,11 +250,35 @@ class ListField(BaseField):
             raise ValidationError('All items in a list field must be of the '
                                   'specified type')
 
-    def prepare_query_value(self, value):
+    def prepare_query_value(self, op, value):
+        if op in ('set', 'unset'):
+            return [self.field.to_mongo(v) for v in value]
         return self.field.to_mongo(value)
 
     def lookup_member(self, member_name):
         return self.field.lookup_member(member_name)
+
+
+class DictField(BaseField):
+    """A dictionary field that wraps a standard Python dictionary. This is
+    similar to an embedded document, but the structure is not defined.
+
+    .. versionadded:: 0.2.3
+    """
+
+    def validate(self, value):
+        """Make sure that a list of valid fields is being used.
+        """
+        if not isinstance(value, dict):
+            raise ValidationError('Only dictionaries may be used in a '
+                                  'DictField') 
+
+        if any(('.' in k or '$' in k) for k in value):
+            raise ValidationError('Invalid dictionary key name - keys may not ' 
+                                  'contain "." or "$" characters')
+
+    def lookup_member(self, member_name):
+        return BaseField(name=member_name)
 
 
 class ReferenceField(BaseField):
@@ -206,7 +308,7 @@ class ReferenceField(BaseField):
             value = _get_db().dereference(value)
             if value is not None:
                 instance._data[self.name] = self.document_type._from_son(value)
-        
+
         return super(ReferenceField, self).__get__(instance, owner)
 
     def to_mongo(self, document):
@@ -225,8 +327,8 @@ class ReferenceField(BaseField):
         id_ = id_field.to_mongo(id_)
         collection = self.document_type._meta['collection']
         return pymongo.dbref.DBRef(collection, id_)
-    
-    def prepare_query_value(self, value):
+
+    def prepare_query_value(self, op, value):
         return self.to_mongo(value)
 
     def validate(self, value):

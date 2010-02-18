@@ -1,8 +1,7 @@
 from base import (DocumentMetaclass, TopLevelDocumentMetaclass, BaseDocument,
                   ValidationError)
-from queryset import OperationError, QuerySet
+from queryset import OperationError
 from connection import _get_db
-
 
 import pymongo
 
@@ -76,6 +75,7 @@ class Document(BaseDocument):
             if force_insert:
                 object_id = collection.insert(doc, safe=safe)
             else:
+<<<<<<< HEAD
                 if getattr(self, 'id', None) == None:
                     # new document
                     object_id = collection.save(doc, safe=safe)
@@ -98,12 +98,14 @@ class Document(BaseDocument):
                     object_id = self['id']
             
             for field in self._fields.values(): field.modified = False
+=======
+                object_id = collection.save(doc, safe=safe)
+>>>>>>> hmarr/master
         except pymongo.errors.OperationFailure, err:
             message = 'Could not save document (%s)'
-            if 'duplicate key' in str(err):
-                message = 'Tried to save duplicate unique keys (%s)'
-            raise OperationError(message % str(err))
-
+            if u'duplicate key' in unicode(err):
+                message = u'Tried to save duplicate unique keys (%s)'
+            raise OperationError(message % unicode(err))
         id_field = self._meta['id_field']
         self[id_field] = self._fields[id_field].to_python(object_id)
 
@@ -118,7 +120,8 @@ class Document(BaseDocument):
         try:
             self.__class__.objects(**{id_field: object_id}).delete(safe=safe)
         except pymongo.errors.OperationFailure, err:
-            raise OperationError('Could not delete document (%s)' % str(err))
+            message = u'Could not delete document (%s)' % err.message
+            raise OperationError(message)
 
     def reload(self):
         """Reloads all attributes from the database.
@@ -129,7 +132,6 @@ class Document(BaseDocument):
         obj = self.__class__.objects(**{id_field: self[id_field]}).first()
         for field in self._fields:
             setattr(self, field, obj[field])
-            obj.modified = False
 
     @classmethod
     def drop_collection(cls):

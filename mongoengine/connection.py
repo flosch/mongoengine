@@ -7,7 +7,6 @@ __all__ = ['ConnectionError', 'connect']
 _connection_settings = {
     'host': 'localhost',
     'port': 27017,
-    'pool_size': 1,
 }
 _connection = None
 
@@ -60,3 +59,4 @@ def connect(db, username=None, password=None, **kwargs):
     _db_name = db
     _db_username = username
     _db_password = password
+    return _get_db()

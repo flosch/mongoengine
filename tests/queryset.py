@@ -16,12 +16,12 @@ class QuerySetTest(unittest.TestCase):
             name = StringField()
             age = IntField()
         self.Person = Person
-
+        
     def test_initialisation(self):
         """Ensure that a QuerySet is correctly initialised by QuerySetManager.
         """
         self.assertTrue(isinstance(self.Person.objects, QuerySet))
-        self.assertEqual(self.Person.objects._collection.name(), 
+        self.assertEqual(self.Person.objects._collection.name, 
                          self.Person._meta['collection'])
         self.assertTrue(isinstance(self.Person.objects._collection,
                                    pymongo.collection.Collection))
@@ -277,7 +277,25 @@ class QuerySetTest(unittest.TestCase):
         
         BlogPost.drop_collection()
 
+    def test_find_dict_item(self):
+        """Ensure that DictField items may be found.
+        """
+        class BlogPost(Document):
+            info = DictField()
+
+        BlogPost.drop_collection()
+
+        post = BlogPost(info={'title': 'test'})
+        post.save()
+
+        post_obj = BlogPost.objects(info__title='test').first()
+        self.assertEqual(post_obj.id, post.id)
+
+        BlogPost.drop_collection()
+
     def test_q(self):
+        """Ensure that Q objects may be used to query for documents.
+        """
         class BlogPost(Document):
             publish_date = DateTimeField()
             published = BooleanField()
@@ -312,6 +330,15 @@ class QuerySetTest(unittest.TestCase):
         self.assertFalse(any(obj.id in posts for obj in [post5, post6]))
 
         BlogPost.drop_collection()
+
+        # Check the 'in' operator
+        self.Person(name='user1', age=20).save()
+        self.Person(name='user2', age=20).save()
+        self.Person(name='user3', age=30).save()
+        self.Person(name='user4', age=40).save()
+        
+        self.assertEqual(len(self.Person.objects(Q(age__in=[20]))), 2)
+        self.assertEqual(len(self.Person.objects(Q(age__in=[20, 30]))), 3)
 
     def test_exec_js_query(self):
         """Ensure that queries are properly formed for use in exec_js.
@@ -567,6 +594,30 @@ class QuerySetTest(unittest.TestCase):
 
         BlogPost.drop_collection()
 
+    def test_update_value_conversion(self):
+        """Ensure that values used in updates are converted before use.
+        """
+        class Group(Document):
+            members = ListField(ReferenceField(self.Person))
+
+        Group.drop_collection()
+
+        user1 = self.Person(name='user1')
+        user1.save()
+        user2 = self.Person(name='user2')
+        user2.save()
+
+        group = Group()
+        group.save()
+
+        Group.objects(id=group.id).update(set__members=[user1, user2])
+        group.reload()
+
+        self.assertTrue(len(group.members) == 2)
+        self.assertEqual(group.members[0].name, user1.name)
+        self.assertEqual(group.members[1].name, user2.name)
+
+        Group.drop_collection()
 
     def test_types_index(self):
         """Ensure that and index is used when '_types' is being used in a
@@ -594,6 +645,41 @@ class QuerySetTest(unittest.TestCase):
         self.assertFalse([('_types', 1)] in info.values())
 
         BlogPost.drop_collection()
+        
+    def test_bulk(self):
+        """Ensure bulk querying by object id returns a proper dict.
+        """
+        class BlogPost(Document):
+            title = StringField()
+            
+        BlogPost.drop_collection()
+
+        post_1 = BlogPost(title="Post #1")
+        post_2 = BlogPost(title="Post #2")
+        post_3 = BlogPost(title="Post #3")
+        post_4 = BlogPost(title="Post #4")
+        post_5 = BlogPost(title="Post #5")
+
+        post_1.save()
+        post_2.save()
+        post_3.save()
+        post_4.save()
+        post_5.save()
+        
+        ids = [post_1.id, post_2.id, post_5.id]
+        objects = BlogPost.objects.in_bulk(ids)
+        
+        self.assertEqual(len(objects), 3)
+
+        self.assertTrue(post_1.id in objects)
+        self.assertTrue(post_2.id in objects)
+        self.assertTrue(post_5.id in objects)
+        
+        self.assertTrue(objects[post_1.id].title == post_1.title)
+        self.assertTrue(objects[post_2.id].title == post_2.title)
+        self.assertTrue(objects[post_3.id].title == post_3.title)        
+        
+        BlogPost.drop_collection()
 
     def tearDown(self):
         self.Person.drop_collection()
@@ -602,6 +688,8 @@ class QuerySetTest(unittest.TestCase):
 class QTest(unittest.TestCase):
     
     def test_or_and(self):
+        """Ensure that Q objects may be combined correctly.
+        """
         q1 = Q(name='test')
         q2 = Q(age__gte=18)
 
