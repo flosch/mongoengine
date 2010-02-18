@@ -75,7 +75,6 @@ class Document(BaseDocument):
             if force_insert:
                 object_id = collection.insert(doc, safe=safe)
             else:
-<<<<<<< HEAD
                 if getattr(self, 'id', None) == None:
                     # new document
                     object_id = collection.save(doc, safe=safe)
@@ -98,9 +97,6 @@ class Document(BaseDocument):
                     object_id = self['id']
             
             for field in self._fields.values(): field.modified = False
-=======
-                object_id = collection.save(doc, safe=safe)
->>>>>>> hmarr/master
         except pymongo.errors.OperationFailure, err:
             message = 'Could not save document (%s)'
             if u'duplicate key' in unicode(err):
